@@ -95,8 +95,7 @@ export default function GeoapifyMap() {
     return `https://maps.geoapify.com/v1/tile/carto/{z}/{x}/{y}.png?&apiKey=${encodeURIComponent(API_KEY)}`;
   }, [API_KEY]);
 
-  const boundingBoxPhuket =
-    "10.716463143326969,48.755151258420966,10.835314015356737,48.680903341613316";
+  const boundingBoxPhuket = "98.25,7.75,98.55,8.20";
 
   const searchPlaces = async () => {
     if (!searchQuery.trim() && !category.trim()) return;
