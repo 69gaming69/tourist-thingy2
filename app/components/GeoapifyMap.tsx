@@ -387,12 +387,6 @@ export default function GeoapifyMap() {
           </div>
         </div>
       )}
-
-      {!API_KEY && (
-        <p className="mt-3 text-sm text-red-600">
-          Geoapify API key missing. Add NEXT_PUBLIC_GEOAPIFY_API_KEY in your environment.
-        </p>
-      )}
     </div>
   );
 }
