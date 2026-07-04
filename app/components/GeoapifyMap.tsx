@@ -27,8 +27,6 @@ interface PlaceResult {
 // Default position (Phuket, Thailand)
 const DEFAULT_POSITION: [number, number] = [7.8804, 98.3923];
 
-const GEOAPIFY_API_KEY_FALLBACK = "d8c4dd9c65864d37803a77f2cde2c7fc";
-
 function createCustomIcon(category: string) {
   const colors: Record<string, string> = {
     accommodation: "#e11d48",
@@ -109,13 +107,16 @@ function getCategoryFromDetails(details?: string[]): string {
 // is currently flagged by TS as not having Node types in the browser bundle.
 // Next.js will replace NEXT_PUBLIC_* at build time. Some setups still type-check
 // without Node types, so we keep the expression local.
+// Prefer NEXT_PUBLIC_GEOAPIFY_API_KEY from environment (Next.js injects at build time).
+// Keep fallback for local/dev.
 const NEXT_PUBLIC_GEOAPIFY_API_KEY: string =
   (globalThis as unknown as { __NEXT_PUBLIC_GEOAPIFY_API_KEY?: string }).__NEXT_PUBLIC_GEOAPIFY_API_KEY ??
-  "";
+  (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_GEOAPIFY_API_KEY ? process.env.NEXT_PUBLIC_GEOAPIFY_API_KEY : "");
 
 function getApiKey() {
-  return NEXT_PUBLIC_GEOAPIFY_API_KEY || GEOAPIFY_API_KEY_FALLBACK;
+  return NEXT_PUBLIC_GEOAPIFY_API_KEY;
 }
+
 
 export default function GeoapifyMap() {
   const [searchQuery, setSearchQuery] = useState("");
