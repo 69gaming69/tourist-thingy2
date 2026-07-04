@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import NavBar from "./components/navbar";
 
 export const metadata: Metadata = {
   title: "Phuket Tourist App",
@@ -13,7 +14,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        <NavBar />
+        {children}
+      </body>
     </html>
   );
 }
+

@@ -5,7 +5,7 @@ export default function Home() {
     <main className="min-h-screen">
       <div className="p-6 max-w-6xl mx-auto">
         <header className="mb-6">
-          <h1 className="text-2xl sm:text-3xl font-bold">Geoapify Places (Phuket)</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold">Phuket map</h1>
           <p className="text-gray-600 mt-2">
             Search places using Geoapify&apos;s Places API, then click markers or items to focus.
           </p>

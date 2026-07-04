@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+
 import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -54,6 +55,41 @@ function MapUpdater({ center }: { center: [number, number] }) {
   return null;
 }
 
+function UserLocationMarker({
+  position,
+  onClick,
+}: {
+  position: [number, number];
+  onClick?: () => void;
+}) {
+  // Blue ring / dot marker
+  const icon = useMemo(
+    () =>
+      L.divIcon({
+        className: "user-location-marker",
+        html: `<div style="background-color:#2563eb; width:16px; height:16px; border-radius:50%; border:3px solid #ffffff; box-shadow: 0 2px 8px rgba(0,0,0,0.25);"></div>`,
+        iconSize: [16, 16],
+        iconAnchor: [8, 8],
+        popupAnchor: [0, -10],
+      }),
+    []
+  );
+
+  return (
+    <Marker position={position} icon={icon} eventHandlers={onClick ? { click: onClick } : undefined}>
+      <Popup>
+        <div className="text-sm">
+          <strong className="block text-base">You are here</strong>
+          <p className="mt-1 text-gray-600">
+            {position[0].toFixed(5)}, {position[1].toFixed(5)}
+          </p>
+        </div>
+      </Popup>
+    </Marker>
+  );
+}
+
+
 function getCategoryFromDetails(details?: string[]): string {
   if (!details) return "default";
   if (details.some((d) => d.includes("hotel") || d.includes("hostel") || d.includes("guesthouse")))
@@ -83,6 +119,23 @@ function getApiKey() {
 
 export default function GeoapifyMap() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
+
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setUserLocation([pos.coords.latitude, pos.coords.longitude]);
+      },
+      (err) => {
+        console.warn("Geolocation error:", err);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+    );
+  }, []);
+
+
   const [places, setPlaces] = useState<PlaceResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
@@ -122,10 +175,17 @@ export default function GeoapifyMap() {
       const data = await response.json();
 
       const results: PlaceResult[] = Array.isArray(data?.features)
-        ? data.features.map((f: any) => {
-            const coords = f?.geometry?.coordinates;
-            const props = f?.properties ?? {};
-            const id = String(props.place_id ?? f?.id ?? "");
+        ? data.features.map((f: unknown) => {
+            const feature = f as {
+              id?: unknown;
+              geometry?: { coordinates?: [unknown, unknown] } | null;
+              properties?: Record<string, unknown> | null;
+            };
+
+            const coords = feature?.geometry?.coordinates;
+            const props = (feature?.properties ?? {}) as Record<string, unknown>;
+            const id = String(props.place_id ?? feature?.id ?? "");
+
 
             const lat = typeof coords?.[1] === "number" ? coords[1] : Number(props?.lat);
             const lon = typeof coords?.[0] === "number" ? coords[0] : Number(props?.lon);
@@ -175,46 +235,55 @@ export default function GeoapifyMap() {
     }
   };
 
+
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
       searchPlaces();
     }
   };
 
-  const mapCenter = selectedPlace
-    ? ([selectedPlace.lat, selectedPlace.lon] as [number, number])
-    : DEFAULT_POSITION;
-
   return (
     <div>
       {/* Search + Filters */}
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-        <input
-          type="text"
-          placeholder="Search text (e.g., supermarket, cafe, museum)..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          onKeyDown={handleKeyPress}
-          className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
+      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-center">
+        <div className="relative">
+          <input
+            type="text"
+            placeholder="Search text (e.g., supermarket, cafe, museum)..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={handleKeyPress}
+            className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          {searchQuery.trim().length > 0 && (
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={() => setSearchQuery("")}
+              className="absolute inset-y-0 right-2 my-auto flex h-7 w-7 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+            >
+              ×
+            </button>
+          )}
+        </div>
 
         <select
           value={category}
           onChange={(e) => setCategory(e.target.value)}
-          className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+          className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           aria-label="Category"
         >
-          <option value="commercial.supermarket">commercial.supermarket</option>
-          <option value="catering.restaurant">catering.restaurant</option>
-          <option value="tourism.hotel">tourism.hotel</option>
-          <option value="tourism.attraction">tourism.attraction</option>
-          <option value="leisure.shopping">leisure.shopping</option>
+          <option value="commercial.supermarket">commercial</option>
+          <option value="catering.restaurant">catering/restaurant</option>
+          <option value="tourism.hotel">tourism/hotel</option>
+          <option value="tourism.attraction">tourism/attraction</option>
+          <option value="leisure.shopping">leisure/shopping</option>
         </select>
 
         <button
           onClick={searchPlaces}
           disabled={loading || !API_KEY}
-          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition-colors"
+          className="rounded-lg bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-400 transition-colors"
         >
           {loading ? "Searching..." : "Search"}
         </button>
@@ -222,64 +291,99 @@ export default function GeoapifyMap() {
 
       {/* Results Count */}
       {places.length > 0 && (
-        <p className="mb-2 text-sm text-gray-600">
-          Found {places.length} place{places.length !== 1 ? "s" : ""} in Phuket
-        </p>
+        <div className="mb-2 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-gray-600">
+            Found {places.length} place{places.length !== 1 ? "s" : ""} in Phuket
+          </p>
+          {selectedPlace && (
+            <p className="text-sm text-gray-600">
+              Selected: <span className="font-medium text-gray-900">{selectedPlace.name}</span>
+            </p>
+          )}
+        </div>
       )}
 
       {/* Map */}
-      <MapContainer
-        center={DEFAULT_POSITION}
-        zoom={13}
-        scrollWheelZoom={true}
-        style={{ height: "500px", width: "100%", borderRadius: "12px" }}
-      >
-        <TileLayer
-          url={tileUrl}
-          attribution='Powered by <a href="https://www.geoapify.com/" target="_blank">Geoapify</a> | <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
-        />
+      <div className="overflow-hidden rounded-2xl border border-gray-200 shadow-sm">
+        <MapContainer
+          center={DEFAULT_POSITION}
+          zoom={13}
+          scrollWheelZoom={true}
+          style={{ height: "520px", width: "100%" }}
+          className="leaflet-container"
+        >
+          <TileLayer
+            url={tileUrl}
+            attribution='Powered by <a href="https://www.geoapify.com/" target="_blank">Geoapify</a> | <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
+          />
 
-        {places.map((place) => (
-          <Marker
-            key={place.place_id}
-            position={[place.lat, place.lon]}
-            icon={createCustomIcon(getCategoryFromDetails(place.details))}
-            eventHandlers={{
-              click: () => setSelectedPlace(place),
-            }}
-          >
-            <Popup>
-              <div className="text-sm">
-                <strong className="block text-base">{place.name}</strong>
-                {place.formatted && <p className="text-gray-600 mt-1">{place.formatted}</p>}
-                {place.categories && place.categories.length > 0 && (
-                  <p className="text-xs text-gray-500 mt-1">Categories: {place.categories.join(", ")}</p>
-                )}
-              </div>
-            </Popup>
-          </Marker>
-        ))}
+          {places.map((place) => (
+            <Marker
+              key={place.place_id}
+              position={[place.lat, place.lon]}
+              icon={createCustomIcon(getCategoryFromDetails(place.details))}
+              eventHandlers={{
+                click: () => setSelectedPlace(place),
+              }}
+            >
+              <Popup>
+                <div className="w-56 text-sm">
+                  <strong className="block text-base">{place.name}</strong>
+                  {place.formatted && (
+                    <p className="mt-1 text-gray-600">{place.formatted}</p>
+                  )}
+                  {place.categories && place.categories.length > 0 && (
+                    <p className="mt-2 text-xs text-gray-500">
+                      Categories: {place.categories.join(", ")}
+                    </p>
+                  )}
+                </div>
+              </Popup>
+            </Marker>
+          ))}
 
-        {selectedPlace && <MapUpdater center={[selectedPlace.lat, selectedPlace.lon]} />}
-      </MapContainer>
+          {selectedPlace && <MapUpdater center={[selectedPlace.lat, selectedPlace.lon]} />}
+
+          {userLocation && (
+            <UserLocationMarker position={userLocation} />
+          )}
+
+        </MapContainer>
+      </div>
 
       {/* Results List */}
       {places.length > 0 && (
-        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {places.slice(0, 6).map((place) => (
-            <button
-              key={place.place_id}
-              onClick={() => setSelectedPlace(place)}
-              className={`p-3 text-left border rounded-lg transition-colors ${
-                selectedPlace?.place_id === place.place_id
-                  ? "border-blue-500 bg-blue-50"
-                  : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
-              }`}
-            >
-              <strong className="block text-sm">{place.name}</strong>
-              {place.formatted && <p className="text-xs text-gray-500 mt-1 line-clamp-2">{place.formatted}</p>}
-            </button>
-          ))}
+        <div className="mt-4">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-sm font-medium text-gray-900">Top results</p>
+            <p className="text-xs text-gray-500">Showing 6 of {places.length}</p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {places.slice(0, 6).map((place) => (
+              <button
+                key={place.place_id}
+                onClick={() => setSelectedPlace(place)}
+                className={`group rounded-xl border p-3 text-left transition-colors ${
+                  selectedPlace?.place_id === place.place_id
+                    ? "border-blue-500 bg-blue-50"
+                    : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <strong className="block text-sm text-gray-900 group-hover:underline">
+                    {place.name}
+                  </strong>
+                  <span className="mt-0.5 inline-flex h-2.5 w-2.5 flex-none rounded-full bg-blue-600" />
+                </div>
+                {place.formatted && (
+                  <p className="mt-1 line-clamp-2 text-xs text-gray-500">
+                    {place.formatted}
+                  </p>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
