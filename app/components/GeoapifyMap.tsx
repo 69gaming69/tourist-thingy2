@@ -78,7 +78,7 @@ function UserLocationMarker({
       <Popup>
         <div className="text-sm">
           <strong className="block text-base">You are here</strong>
-          <p className="mt-1 text-gray-600">
+          <p className="mt-1 text-blue-700">
             {position[0].toFixed(5)}, {position[1].toFixed(5)}
           </p>
         </div>
@@ -261,7 +261,7 @@ export default function GeoapifyMap() {
               type="button"
               aria-label="Clear search"
               onClick={() => setSearchQuery("")}
-              className="absolute inset-y-0 right-2 my-auto flex h-7 w-7 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              className="absolute inset-y-0 right-2 my-auto flex h-7 w-7 items-center justify-center rounded-md text-blue-400 hover:bg-gray-100 hover:text-blue-600"
             >
               ×
             </button>
@@ -293,12 +293,12 @@ export default function GeoapifyMap() {
       {/* Results Count */}
       {places.length > 0 && (
         <div className="mb-2 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-blue-700">
             Found {places.length} place{places.length !== 1 ? "s" : ""} in Phuket
           </p>
           {selectedPlace && (
-            <p className="text-sm text-gray-600">
-              Selected: <span className="font-medium text-gray-900">{selectedPlace.name}</span>
+            <p className="text-sm text-blue-700">
+              Selected: <span className="font-medium text-blue-900">{selectedPlace.name}</span>
             </p>
           )}
         </div>
@@ -331,7 +331,7 @@ export default function GeoapifyMap() {
                 <div className="w-56 text-sm">
                   <strong className="block text-base">{place.name}</strong>
                   {place.formatted && (
-                    <p className="mt-1 text-gray-600">{place.formatted}</p>
+            <p className="mt-1 text-blue-700">{place.formatted}</p>
                   )}
                   {place.categories && place.categories.length > 0 && (
                     <p className="mt-2 text-xs text-gray-500">

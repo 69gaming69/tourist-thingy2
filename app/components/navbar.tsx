@@ -22,6 +22,12 @@ export default function NavBar() {
 
           <div className="hidden sm:flex items-center gap-6 text-sm">
             <Link href="/" className="text-gray-700 hover:text-blue-700 hover:underline">
+              Home
+            </Link>
+            <Link
+              href="/map"
+              className="text-gray-700 hover:text-blue-700 hover:underline"
+            >
               Map
             </Link>
           </div>
