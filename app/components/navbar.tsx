@@ -6,7 +6,7 @@ export default function NavBar() {
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
         <div className="flex h-16 items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-white font-bold">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-600 text-white font-bold">
               P
             </div>
             <div className="leading-tight">
@@ -21,12 +21,12 @@ export default function NavBar() {
           </div>
 
           <div className="hidden sm:flex items-center gap-6 text-sm">
-            <Link href="/" className="text-gray-700 hover:text-blue-700 hover:underline">
+            <Link href="/" className="text-gray-700 hover:text-emerald-700 hover:underline">
               Home
             </Link>
             <Link
               href="/map"
-              className="text-gray-700 hover:text-blue-700 hover:underline"
+              className="text-gray-700 hover:text-emerald-700 hover:underline"
             >
               Map
             </Link>
