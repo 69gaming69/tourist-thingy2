@@ -48,6 +48,12 @@ function formatErrorBody(body: unknown): string {
   return parts.join(" ") || "Request failed";
 }
 
+export function unwrapPaginated<T>(data: T[] | { results?: T[] } | null | undefined): T[] {
+  if (Array.isArray(data)) return data;
+  if (data && Array.isArray(data.results)) return data.results;
+  return [];
+}
+
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   const hasBody = options.body !== undefined && options.body !== null;

@@ -48,3 +48,119 @@ select {
 ::selection {
   background: rgba(16, 185, 129, 0.25);
 }
+
+.maplibregl-map {
+  width: 100%;
+  height: 100%;
+}
+
+.maplibregl-canvas,
+.maplibregl-canvas-container {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.maplibregl-canvas-container,
+.maplibregl-canvas {
+  pointer-events: auto;
+}
+
+@layer components {
+.skeuo-card {
+  background-color: #eaf5ea;
+  background-image: linear-gradient(180deg, #f7fbf7 0%, #eaf5ea 48%, #d7ead7 100%);
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  box-shadow:
+    18px 22px 48px rgba(15, 23, 42, 0.28),
+    -8px -10px 24px rgba(255, 255, 255, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -2px 8px rgba(16, 185, 129, 0.08);
+}
+
+.skeuo-input {
+  background: linear-gradient(180deg, #eef6ee 0%, #f7fbf7 100%);
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  box-shadow:
+    inset 0 3px 8px rgba(15, 23, 42, 0.1),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.skeuo-input:focus {
+  border-color: #34d399;
+  box-shadow:
+    inset 0 3px 8px rgba(15, 23, 42, 0.1),
+    0 0 0 3px rgba(16, 185, 129, 0.18);
+}
+
+.skeuo-eye {
+  background: linear-gradient(180deg, #ffffff, #e8f3e8);
+  box-shadow:
+    0 2px 4px rgba(15, 23, 42, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.skeuo-toggle {
+  background: linear-gradient(180deg, #d9ead9, #cfe3cf);
+  box-shadow: inset 0 2px 6px rgba(15, 23, 42, 0.12);
+}
+
+.skeuo-toggle-active {
+  background: linear-gradient(180deg, #34d399, #059669);
+  box-shadow:
+    0 8px 16px rgba(16, 185, 129, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.skeuo-panel {
+  background: linear-gradient(180deg, #f7fbf7, #e6f1e6);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 8px 18px rgba(15, 23, 42, 0.06);
+}
+
+.skeuo-track {
+  background: #cfdccf;
+  box-shadow: inset 0 2px 4px rgba(15, 23, 42, 0.18);
+}
+
+.skeuo-check {
+  display: inline-flex;
+  height: 1.35rem;
+  width: 1.35rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.4rem;
+  background: linear-gradient(180deg, #f8faf8, #d7e2d7);
+  box-shadow:
+    inset 0 2px 4px rgba(15, 23, 42, 0.16),
+    0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.skeuo-check.is-on {
+  background: linear-gradient(180deg, #4ade80, #059669);
+  box-shadow:
+    0 4px 10px rgba(16, 185, 129, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.skeuo-primary {
+  background: linear-gradient(180deg, #34d399, #047857);
+  box-shadow:
+    0 12px 24px rgba(16, 185, 129, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.skeuo-primary:hover:not(:disabled) {
+  filter: brightness(1.04);
+}
+
+.skeuo-secondary {
+  background: linear-gradient(180deg, #ffffff, #e8f0e8);
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  box-shadow:
+    0 8px 16px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+}

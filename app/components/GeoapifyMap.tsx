@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import Map, { Marker, Popup, NavigationControl } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { MapRef, ViewState } from "react-map-gl/maplibre";
-import { apiFetch } from "@/lib/api";
+import type { MapRef } from "react-map-gl/maplibre";
+import { ApiError, apiFetch, unwrapPaginated } from "@/lib/api";
+import { useAuth } from "@/app/components/AuthProvider";
 
 export type PlaceCategory =
   | "beach"
@@ -36,6 +37,30 @@ type MapPlacePayload = {
   description?: string;
   is_promoted?: boolean;
   image_url?: string;
+};
+
+type CollectibleRarity = "common" | "rare" | "epic" | "legendary";
+
+interface CollectibleResult {
+  id: number;
+  name: string;
+  description: string;
+  rarity: CollectibleRarity;
+  image_url?: string;
+  place: number | null;
+  place_name?: string;
+  latitude: number;
+  longitude: number;
+  catch_radius_meters: number;
+  xp_reward: number;
+  points_reward: number;
+  collected: boolean;
+}
+
+type CollectiblePayload = Omit<CollectibleResult, "latitude" | "longitude" | "collected"> & {
+  latitude: number | string;
+  longitude: number | string;
+  collected?: boolean;
 };
 
 const DEFAULT_POSITION: { latitude: number; longitude: number } = {
@@ -118,6 +143,20 @@ const CATEGORY_COLORS: Record<PlaceCategory, string> = {
   other: "#64748b",
 };
 
+const RARITY_LABELS: Record<CollectibleRarity, string> = {
+  common: "Common",
+  rare: "Rare",
+  epic: "Epic",
+  legendary: "Legendary",
+};
+
+const RARITY_COLORS: Record<CollectibleRarity, string> = {
+  common: "#34d399",
+  rare: "#38bdf8",
+  epic: "#a78bfa",
+  legendary: "#fbbf24",
+};
+
 const SATELLITE_STYLE = {
   version: 8 as const,
   sources: {
@@ -158,25 +197,71 @@ function normalizePlace(place: MapPlacePayload): PlaceResult {
   };
 }
 
+function normalizeCollectible(item: CollectiblePayload): CollectibleResult {
+  const rarity = (item.rarity in RARITY_COLORS ? item.rarity : "common") as CollectibleRarity;
+  return {
+    id: item.id,
+    name: item.name,
+    description: item.description ?? "",
+    rarity,
+    image_url: item.image_url,
+    place: item.place,
+    place_name: item.place_name,
+    latitude: toNumber(item.latitude),
+    longitude: toNumber(item.longitude),
+    catch_radius_meters: item.catch_radius_meters,
+    xp_reward: item.xp_reward,
+    points_reward: item.points_reward,
+    collected: Boolean(item.collected),
+  };
+}
+
+async function fetchAllCollectibles(): Promise<CollectibleResult[]> {
+  const collected: CollectibleResult[] = [];
+  let path: string | null = "/api/collectibles/";
+
+  while (path) {
+    const data = await apiFetch<CollectiblePayload[] | { results?: CollectiblePayload[]; next?: string | null }>(
+      path
+    );
+    if (Array.isArray(data)) {
+      return data.map(normalizeCollectible);
+    }
+    collected.push(...unwrapPaginated(data).map(normalizeCollectible));
+    if (!data.next) {
+      path = null;
+      break;
+    }
+    try {
+      const nextUrl = new URL(data.next, window.location.origin);
+      path = `${nextUrl.pathname}${nextUrl.search}`;
+    } catch {
+      path = null;
+    }
+  }
+
+  return collected;
+}
+
 export default function GeoapifyMap() {
   const mapRef = useRef<MapRef | null>(null);
+  const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [category, setCategory] = useState<PlaceCategory | "all">("all");
   const [places, setPlaces] = useState<PlaceResult[]>([]);
+  const [collectibles, setCollectibles] = useState<CollectibleResult[]>([]);
   const [usingFallback, setUsingFallback] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
+  const [selectedCollectible, setSelectedCollectible] = useState<CollectibleResult | null>(null);
+  const [collectStatus, setCollectStatus] = useState<string | null>(null);
+  const [collecting, setCollecting] = useState(false);
   const [userLocation, setUserLocation] = useState<{
     latitude: number;
     longitude: number;
   } | null>(null);
-  const [viewState, setViewState] = useState<Partial<ViewState>>({
-    latitude: DEFAULT_POSITION.latitude,
-    longitude: DEFAULT_POSITION.longitude,
-    zoom: DEFAULT_ZOOM,
-  });
   const [isMapLoaded, setIsMapLoaded] = useState(false);
 
   useEffect(() => {
@@ -232,18 +317,36 @@ export default function GeoapifyMap() {
   }, [debouncedSearch, category]);
 
   useEffect(() => {
-    if (!mapRef.current || !selectedPlace || !isMapLoaded) return;
-    try {
-      mapRef.current.stop();
-      mapRef.current.flyTo({
-        center: [selectedPlace.longitude, selectedPlace.latitude],
-        zoom: DEFAULT_ZOOM,
-        duration: 1000,
-      });
-    } catch {
-      // Map may not be ready yet; ignore transient camera errors.
+    let cancelled = false;
+
+    async function loadCollectibles() {
+      try {
+        const items = await fetchAllCollectibles();
+        if (!cancelled) setCollectibles(items);
+      } catch {
+        if (!cancelled) setCollectibles([]);
+      }
     }
-  }, [selectedPlace?.id, isMapLoaded]);
+
+    void loadCollectibles();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!isMapLoaded) return;
+    const map = mapRef.current?.getMap();
+    if (!map?.loaded()) return;
+    const target = selectedPlace ?? selectedCollectible;
+    if (!target) return;
+    if (!Number.isFinite(target.latitude) || !Number.isFinite(target.longitude)) return;
+    if (map.isMoving()) return;
+    map.easeTo({
+      center: [target.longitude, target.latitude],
+      duration: 600,
+    });
+  }, [selectedPlace?.id, selectedCollectible?.id, isMapLoaded]);
 
   const visiblePlaces = useMemo(() => {
     if (!usingFallback) return places;
@@ -262,6 +365,65 @@ export default function GeoapifyMap() {
   const handleMapLoad = useCallback(() => {
     setIsMapLoaded(true);
   }, []);
+
+  const handleCollect = useCallback(async () => {
+    if (!selectedCollectible) return;
+    if (!user) {
+      setCollectStatus("Log in to collect this item.");
+      return;
+    }
+
+    setCollecting(true);
+    setCollectStatus(null);
+
+    const coords = await new Promise<{ latitude: number; longitude: number } | null>((resolve) => {
+      if (!navigator.geolocation) {
+        resolve(userLocation);
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) =>
+          resolve({
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+          }),
+        () => resolve(userLocation),
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 15000 }
+      );
+    });
+
+    if (!coords) {
+      setCollecting(false);
+      setCollectStatus("Location is required to collect. Allow GPS and try again.");
+      return;
+    }
+
+    setUserLocation(coords);
+
+    try {
+      await apiFetch(`/api/collectibles/${selectedCollectible.id}/collect/`, {
+        method: "POST",
+        body: JSON.stringify({
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+        }),
+      });
+      setCollectibles((current) =>
+        current.map((item) =>
+          item.id === selectedCollectible.id ? { ...item, collected: true } : item
+        )
+      );
+      setSelectedCollectible((current) =>
+        current ? { ...current, collected: true } : current
+      );
+      setCollectStatus("Collected!");
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Could not collect this item.";
+      setCollectStatus(message);
+    } finally {
+      setCollecting(false);
+    }
+  }, [selectedCollectible, user, userLocation]);
 
   return (
     <div className="space-y-6 font-['Inter',system-ui,sans-serif]">
@@ -344,20 +506,20 @@ export default function GeoapifyMap() {
                     shadow-[0_30px_80px_rgba(15,23,42,0.10),0_10px_30px_rgba(15,23,42,0.06),-4px_-4px_16px_rgba(255,255,255,0.8)]
                     border border-slate-200/60 bg-white transition-all duration-300"
       >
-        <div className="relative h-[540px] w-full">
+        <div className="relative h-[540px] w-full min-h-[540px]">
           {loading && (
-            <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/70 text-sm font-medium text-slate-600">
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-white/70 text-sm font-medium text-slate-600">
               Loading places…
             </div>
           )}
           {error && !loading && (
-            <div className="absolute left-4 right-4 top-4 z-20 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <div className="pointer-events-none absolute left-4 right-4 top-4 z-20 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
               {error}
             </div>
           )}
           <Map
             ref={mapRef}
-            mapLib={import("maplibre-gl")}
+            reuseMaps
             mapStyle={SATELLITE_STYLE}
             initialViewState={{
               latitude: DEFAULT_POSITION.latitude,
@@ -366,25 +528,13 @@ export default function GeoapifyMap() {
             }}
             style={{ width: "100%", height: "100%" }}
             onLoad={handleMapLoad}
-            onMove={(evt) => setViewState(evt.viewState)}
             attributionControl={false}
             scrollZoom
             dragPan
             doubleClickZoom
             touchZoomRotate
           >
-            <div className="absolute right-4 top-4 z-10">
-              <NavigationControl
-                position="top-right"
-                style={{
-                  borderRadius: "16px",
-                  overflow: "hidden",
-                  boxShadow: "0 8px 24px rgba(15,23,42,0.12), inset 0 1px 0 rgba(255,255,255,0.9)",
-                  border: "1px solid rgba(226, 232, 240, 0.8)",
-                  background: "white",
-                }}
-              />
-            </div>
+            <NavigationControl position="top-right" />
 
             {userLocation && (
               <Marker
@@ -393,7 +543,7 @@ export default function GeoapifyMap() {
                 anchor="center"
               >
                 <div
-                  className="relative flex h-7 w-7 items-center justify-center"
+                  className="pointer-events-none relative flex h-7 w-7 items-center justify-center"
                   style={{
                     filter: "drop-shadow(0 4px 12px rgba(16,185,129,0.35))",
                   }}
@@ -412,12 +562,14 @@ export default function GeoapifyMap() {
               const color = CATEGORY_COLORS[place.category] ?? CATEGORY_COLORS.other;
               return (
                 <Marker
-                  key={place.id}
+                  key={`place-${place.id}`}
                   latitude={place.latitude}
                   longitude={place.longitude}
                   anchor="bottom"
                   onClick={(e) => {
                     e.originalEvent.stopPropagation();
+                    setSelectedCollectible(null);
+                    setCollectStatus(null);
                     setSelectedPlace(place);
                   }}
                 >
@@ -439,6 +591,45 @@ export default function GeoapifyMap() {
                       <div className="h-3 w-3 rounded-full bg-white/90 shadow-inner" />
                     </div>
                     <div className="absolute -bottom-1.5 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 rounded-sm bg-slate-900/10" />
+                  </button>
+                </Marker>
+              );
+            })}
+
+            {collectibles.map((item) => {
+              const color = RARITY_COLORS[item.rarity];
+              return (
+                <Marker
+                  key={`collectible-${item.id}`}
+                  latitude={item.latitude}
+                  longitude={item.longitude}
+                  anchor="center"
+                  onClick={(e) => {
+                    e.originalEvent.stopPropagation();
+                    setSelectedPlace(null);
+                    setCollectStatus(null);
+                    setSelectedCollectible(item);
+                  }}
+                >
+                  <button
+                    type="button"
+                    aria-label={item.name}
+                    className="relative flex h-9 w-9 cursor-pointer items-center justify-center transition-transform duration-200 hover:scale-110 active:scale-95"
+                    style={{ filter: `drop-shadow(0 0 12px ${color}88)` }}
+                  >
+                    <span
+                      className="absolute inset-0 rounded-full opacity-70"
+                      style={{
+                        background: `radial-gradient(circle, ${color}55 0%, transparent 70%)`,
+                      }}
+                    />
+                    <span
+                      className="relative h-5 w-5 rounded-full border-2 border-white"
+                      style={{
+                        background: `radial-gradient(circle at 30% 30%, #fff 0%, ${color} 55%, ${color}cc 100%)`,
+                        opacity: item.collected ? 0.45 : 1,
+                      }}
+                    />
                   </button>
                 </Marker>
               );
@@ -481,6 +672,64 @@ export default function GeoapifyMap() {
                 </div>
               </Popup>
             )}
+
+            {selectedCollectible && (
+              <Popup
+                latitude={selectedCollectible.latitude}
+                longitude={selectedCollectible.longitude}
+                anchor="bottom"
+                offset={[0, -8]}
+                closeOnClick={false}
+                onClose={() => {
+                  setSelectedCollectible(null);
+                  setCollectStatus(null);
+                }}
+                maxWidth="300px"
+                className="skeuo-popup"
+              >
+                <div
+                  className="rounded-[20px] border border-emerald-100 bg-white p-4
+                              shadow-[0_12px_40px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.9)]"
+                >
+                  <p
+                    className="text-[10px] font-bold uppercase tracking-[0.22em]"
+                    style={{ color: RARITY_COLORS[selectedCollectible.rarity] }}
+                  >
+                    {RARITY_LABELS[selectedCollectible.rarity]} collectible
+                  </p>
+                  <h3 className="mt-1.5 text-base font-bold text-slate-900">{selectedCollectible.name}</h3>
+                  {selectedCollectible.description ? (
+                    <p className="mt-1.5 text-sm leading-relaxed text-slate-500">
+                      {selectedCollectible.description}
+                    </p>
+                  ) : null}
+                  {selectedCollectible.place_name ? (
+                    <p className="mt-2 text-xs text-slate-500">
+                      Near {selectedCollectible.place_name}
+                    </p>
+                  ) : null}
+                  <p className="mt-1 text-xs text-slate-400">
+                    +{selectedCollectible.xp_reward} XP · +{selectedCollectible.points_reward} pts ·{" "}
+                    {selectedCollectible.catch_radius_meters}m range
+                  </p>
+                  {selectedCollectible.collected ? (
+                    <p className="mt-3 text-sm font-semibold text-emerald-700">Already collected</p>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={collecting}
+                      onClick={() => void handleCollect()}
+                      className="mt-3 w-full rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_8px_18px_rgba(16,185,129,0.28)] disabled:opacity-60"
+                    >
+                      {collecting ? "Collecting…" : user ? "Collect" : "Log in to collect"}
+                    </button>
+                  )}
+                  {collectStatus ? (
+                    <p className="mt-2 text-xs leading-relaxed text-amber-800">{collectStatus}</p>
+                  ) : null}
+                </div>
+              </Popup>
+            )}
           </Map>
         </div>
       </div>
@@ -507,12 +756,13 @@ export default function GeoapifyMap() {
                 Destination
               </p>
               <p className="text-lg font-bold text-slate-900 leading-tight">
-                {selectedPlace?.name ?? "Tap a marker to explore"}
+                {selectedPlace?.name ?? selectedCollectible?.name ?? "Tap a marker to explore"}
               </p>
             </div>
           </div>
           <p className="mt-4 text-sm leading-relaxed text-slate-500 pl-0.5">
             {selectedPlace?.description ||
+              selectedCollectible?.description ||
               "Pick a point on the satellite map to reveal the next Phuket destination."}
           </p>
         </div>
@@ -540,7 +790,7 @@ export default function GeoapifyMap() {
             </div>
           </div>
           <p className="mt-4 text-sm leading-relaxed text-slate-500 pl-0.5">
-            Premium satellite imagery powered by MapLibre &amp; ESRI. Rich shadows, tactile surfaces, and polished depth create a skeuomorphic experience.
+            Pins are places. Glowing orbs are collectibles. Pan, zoom, and tap markers for details.
           </p>
         </div>
       </div>
