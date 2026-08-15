@@ -1,6 +1,7 @@
 # Green Color Scheme — TODO
 
 ## Steps
+
 - [x] 1. Read all files to understand current color scheme
 - [x] 2. Present plan & get approval
 - [x] 3. Edit `app/globals.css` — CSS variables, body gradient, selection color
@@ -10,4 +11,3 @@
 - [x] 7. Edit `app/map/page.tsx` — Background color
 
 ✅ **Completed** — Color scheme changed from blue/sky to green/emerald
-

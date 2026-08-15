@@ -4,90 +4,120 @@ import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import Map, { Marker, Popup, NavigationControl } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { MapRef, ViewState } from "react-map-gl/maplibre";
+import { apiFetch } from "@/lib/api";
 
-type PlaceCategory = "attraction" | "food" | "stay" | "shopping" | "beach";
+export type PlaceCategory =
+  | "beach"
+  | "temple"
+  | "restaurant"
+  | "shop"
+  | "attraction"
+  | "nature"
+  | "nightlife"
+  | "other";
 
 interface PlaceResult {
-  place_id: string;
+  id: number | string;
   name: string;
-  lat: number;
-  lon: number;
+  latitude: number;
+  longitude: number;
   category: PlaceCategory;
-  description: string;
+  description?: string;
+  is_promoted?: boolean;
+  image_url?: string;
 }
 
-const DEFAULT_POSITION: { latitude: number; longitude: number } = { latitude: 7.8804, longitude: 98.3923 };
+type MapPlacePayload = {
+  id: number | string;
+  name: string;
+  category: PlaceCategory;
+  latitude: number | string;
+  longitude: number | string;
+  description?: string;
+  is_promoted?: boolean;
+  image_url?: string;
+};
+
+const DEFAULT_POSITION: { latitude: number; longitude: number } = {
+  latitude: 7.8804,
+  longitude: 98.3923,
+};
 const DEFAULT_ZOOM = 12;
 
 const PLACE_CARDS: PlaceResult[] = [
   {
-    place_id: "phuket_old_town",
+    id: "phuket_old_town",
     name: "Phuket Old Town",
-    lat: 7.8940,
-    lon: 98.3925,
+    latitude: 7.894,
+    longitude: 98.3925,
     category: "attraction",
     description: "Colorful streets, cafes, and street art in historical Phuket.",
   },
   {
-    place_id: "patong_beach",
+    id: "patong_beach",
     name: "Patong Beach",
-    lat: 7.8960,
-    lon: 98.2984,
+    latitude: 7.896,
+    longitude: 98.2984,
     category: "beach",
     description: "Lively sand, blue water, and a beautiful free beach boardwalk.",
   },
   {
-    place_id: "big_buddha",
+    id: "big_buddha",
     name: "Big Buddha Phuket",
-    lat: 7.8278,
-    lon: 98.3124,
+    latitude: 7.8278,
+    longitude: 98.3124,
     category: "attraction",
     description: "A serene hilltop landmark with panoramic island views.",
   },
   {
-    place_id: "chalong_bay_hotel",
+    id: "chalong_bay_hotel",
     name: "Chalong Bay Hotel",
-    lat: 7.8339,
-    lon: 98.3434,
-    category: "stay",
+    latitude: 7.8339,
+    longitude: 98.3434,
+    category: "other",
     description: "Calm stay near Chalong pier and island tours.",
   },
   {
-    place_id: "local_cafe",
+    id: "local_cafe",
     name: "Rustic Coffee Bar",
-    lat: 7.8831,
-    lon: 98.3849,
-    category: "food",
+    latitude: 7.8831,
+    longitude: 98.3849,
+    category: "restaurant",
     description: "A cozy spot for strong coffee and local pastries.",
   },
   {
-    place_id: "central_patong",
+    id: "central_patong",
     name: "Central Phuket Mall",
-    lat: 7.9009,
-    lon: 98.2972,
-    category: "shopping",
+    latitude: 7.9009,
+    longitude: 98.2972,
+    category: "shop",
     description: "Modern mall with boutiques, dining, and a textured skylight.",
   },
 ];
 
 const CATEGORY_LABELS: Record<PlaceCategory | "all", string> = {
   all: "All",
-  attraction: "Attraction",
-  food: "Food",
-  stay: "Stay",
-  shopping: "Shopping",
   beach: "Beach",
+  temple: "Temple",
+  restaurant: "Restaurant",
+  shop: "Shop",
+  attraction: "Attraction",
+  nature: "Nature",
+  nightlife: "Nightlife",
+  other: "Other",
 };
 
 const CATEGORY_COLORS: Record<PlaceCategory, string> = {
-  attraction: "#7c3aed",
-  food: "#f97316",
-  stay: "#0ea5e9",
-  shopping: "#10b981",
   beach: "#38bdf8",
+  temple: "#f59e0b",
+  restaurant: "#f97316",
+  shop: "#10b981",
+  attraction: "#7c3aed",
+  nature: "#22c55e",
+  nightlife: "#ec4899",
+  other: "#64748b",
 };
 
-// ESRI World Imagery satellite style for MapLibre
 const SATELLITE_STYLE = {
   version: 8 as const,
   sources: {
@@ -111,18 +141,48 @@ const SATELLITE_STYLE = {
   ],
 };
 
+function toNumber(value: number | string): number {
+  return typeof value === "number" ? value : Number.parseFloat(value);
+}
+
+function normalizePlace(place: MapPlacePayload): PlaceResult {
+  return {
+    id: place.id,
+    name: place.name,
+    category: place.category,
+    latitude: toNumber(place.latitude),
+    longitude: toNumber(place.longitude),
+    description: place.description ?? "",
+    is_promoted: place.is_promoted,
+    image_url: place.image_url,
+  };
+}
+
 export default function GeoapifyMap() {
   const mapRef = useRef<MapRef | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [category, setCategory] = useState<PlaceCategory | "all">("all");
-const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
-  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [places, setPlaces] = useState<PlaceResult[]>([]);
+  const [usingFallback, setUsingFallback] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
+  const [userLocation, setUserLocation] = useState<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
   const [viewState, setViewState] = useState<Partial<ViewState>>({
     latitude: DEFAULT_POSITION.latitude,
     longitude: DEFAULT_POSITION.longitude,
     zoom: DEFAULT_ZOOM,
   });
   const [isMapLoaded, setIsMapLoaded] = useState(false);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => window.clearTimeout(timeout);
+  }, [searchQuery]);
 
   useEffect(() => {
     if (!navigator.geolocation) return;
@@ -138,37 +198,66 @@ const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
     );
   }, []);
 
-// Fly to selected place when it changes
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPlaces() {
+      setLoading(true);
+      setError(null);
+      const params = new URLSearchParams();
+      if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+      if (category !== "all") params.set("category", category);
+      const query = params.toString();
+      const path = `/api/places/map/${query ? `?${query}` : ""}`;
+
+      try {
+        const data = await apiFetch<MapPlacePayload[]>(path);
+        if (cancelled) return;
+        setPlaces(data.map(normalizePlace));
+        setUsingFallback(false);
+      } catch {
+        if (cancelled) return;
+        setPlaces(PLACE_CARDS);
+        setUsingFallback(true);
+        setError("Could not load places from the API. Showing sample locations.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    void loadPlaces();
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedSearch, category]);
+
   useEffect(() => {
     if (!mapRef.current || !selectedPlace || !isMapLoaded) return;
     try {
-      // Stop any in-progress camera animation to avoid MapLibre's
-      // "Attempting to run(), but is already running" error.
       mapRef.current.stop();
       mapRef.current.flyTo({
-        center: [selectedPlace.lon, selectedPlace.lat],
+        center: [selectedPlace.longitude, selectedPlace.latitude],
         zoom: DEFAULT_ZOOM,
         duration: 1000,
       });
     } catch {
       // Map may not be ready yet; ignore transient camera errors.
     }
-  }, [selectedPlace?.place_id, isMapLoaded]);
+  }, [selectedPlace?.id, isMapLoaded]);
 
-  const filteredPlaces = useMemo(() => {
+  const visiblePlaces = useMemo(() => {
+    if (!usingFallback) return places;
     const query = searchQuery.trim().toLowerCase();
-    return PLACE_CARDS.filter((place) => {
+    return places.filter((place) => {
       const matchesCategory = category === "all" || place.category === category;
       const matchesSearch =
         !query ||
         place.name.toLowerCase().includes(query) ||
-        place.description.toLowerCase().includes(query) ||
+        (place.description ?? "").toLowerCase().includes(query) ||
         CATEGORY_LABELS[place.category].toLowerCase().includes(query);
       return matchesCategory && matchesSearch;
     });
-  }, [searchQuery, category]);
-
-  const visiblePlaces = filteredPlaces.length > 0 ? filteredPlaces : PLACE_CARDS;
+  }, [places, usingFallback, searchQuery, category]);
 
   const handleMapLoad = useCallback(() => {
     setIsMapLoaded(true);
@@ -176,7 +265,6 @@ const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
 
   return (
     <div className="space-y-6 font-['Inter',system-ui,sans-serif]">
-      {/* Search Card — Skeuomorphic */}
       <div
         className="rounded-[28px] border border-slate-200/70 bg-gradient-to-br from-white via-white to-slate-50/80 p-5 
                     shadow-[0_20px_60px_rgba(15,23,42,0.08),inset_0_1px_0_rgba(255,255,255,0.95)] 
@@ -197,7 +285,7 @@ const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
               Explore Phuket
             </p>
             <p className="text-xs font-medium text-slate-600">
-              Search attractions, beaches, food &amp; more
+              Search beaches, temples, restaurants &amp; more
             </p>
           </div>
         </div>
@@ -207,7 +295,7 @@ const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
             type="text"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Search food, beach, stay, or attraction"
+            placeholder="Search beach, temple, restaurant, or attraction"
             className="w-full rounded-2xl border border-slate-200/80 bg-[#edf7ed] px-5 py-3.5 text-sm 
                        text-slate-900 outline-none transition duration-200 
                        shadow-[inset_0_2px_6px_rgba(15,23,42,0.06)]
@@ -217,7 +305,6 @@ const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
         </div>
       </div>
 
-      {/* Category Pills — Skeuomorphic buttons */}
       <div className="flex flex-wrap gap-2.5">
         {(Object.keys(CATEGORY_LABELS) as Array<PlaceCategory | "all">).map((value) => {
           const isActive = category === value;
@@ -252,13 +339,22 @@ const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
         })}
       </div>
 
-      {/* Map Container — Skeuomorphic raised panel */}
       <div
         className="overflow-hidden rounded-[32px] 
                     shadow-[0_30px_80px_rgba(15,23,42,0.10),0_10px_30px_rgba(15,23,42,0.06),-4px_-4px_16px_rgba(255,255,255,0.8)]
                     border border-slate-200/60 bg-white transition-all duration-300"
       >
         <div className="relative h-[540px] w-full">
+          {loading && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/70 text-sm font-medium text-slate-600">
+              Loading places…
+            </div>
+          )}
+          {error && !loading && (
+            <div className="absolute left-4 right-4 top-4 z-20 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              {error}
+            </div>
+          )}
           <Map
             ref={mapRef}
             mapLib={import("maplibre-gl")}
@@ -277,7 +373,6 @@ const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
             doubleClickZoom
             touchZoomRotate
           >
-            {/* Custom Navigation Control — Skeuomorphic */}
             <div className="absolute right-4 top-4 z-10">
               <NavigationControl
                 position="top-right"
@@ -291,7 +386,6 @@ const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
               />
             </div>
 
-            {/* User Location Marker */}
             {userLocation && (
               <Marker
                 latitude={userLocation.latitude}
@@ -304,9 +398,7 @@ const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
                     filter: "drop-shadow(0 4px 12px rgba(16,185,129,0.35))",
                   }}
                 >
-                  {/* Pulse ring */}
                   <div className="absolute inset-0 animate-ping rounded-full bg-emerald-400/30" />
-                  {/* Core dot */}
                   <div
                     className="relative z-10 h-5 w-5 rounded-full border-[3px] border-white 
                                 bg-gradient-to-br from-emerald-400 to-emerald-600 
@@ -316,14 +408,13 @@ const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
               </Marker>
             )}
 
-            {/* Place Markers */}
             {visiblePlaces.map((place) => {
-              const color = CATEGORY_COLORS[place.category];
+              const color = CATEGORY_COLORS[place.category] ?? CATEGORY_COLORS.other;
               return (
                 <Marker
-                  key={place.place_id}
-                  latitude={place.lat}
-                  longitude={place.lon}
+                  key={place.id}
+                  latitude={place.latitude}
+                  longitude={place.longitude}
                   anchor="bottom"
                   onClick={(e) => {
                     e.originalEvent.stopPropagation();
@@ -337,7 +428,6 @@ const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
                       filter: `drop-shadow(0 8px 20px ${color}33)`,
                     }}
                   >
-                    {/* Marker body */}
                     <div
                       className="flex h-8 w-8 items-center justify-center rounded-full 
                                   border-[3px] border-white transition-all duration-200
@@ -348,18 +438,16 @@ const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
                     >
                       <div className="h-3 w-3 rounded-full bg-white/90 shadow-inner" />
                     </div>
-                    {/* Tiny stem shadow */}
                     <div className="absolute -bottom-1.5 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 rounded-sm bg-slate-900/10" />
                   </button>
                 </Marker>
               );
             })}
 
-            {/* Popup for selected place */}
             {selectedPlace && (
               <Popup
-                latitude={selectedPlace.lat}
-                longitude={selectedPlace.lon}
+                latitude={selectedPlace.latitude}
+                longitude={selectedPlace.longitude}
                 anchor="bottom"
                 offset={[0, -8]}
                 closeOnClick={false}
@@ -379,29 +467,17 @@ const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
                       style={{
                         background: `linear-gradient(135deg, ${CATEGORY_COLORS[selectedPlace.category]}, ${CATEGORY_COLORS[selectedPlace.category]}cc)`,
                       }}
-                    >
-                      {selectedPlace.category === "attraction" && (
-                        <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 2l9 7-3 12H6L3 9l9-7z" /></svg>
-                      )}
-                      {selectedPlace.category === "beach" && (
-                        <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M20 21v-2a5 5 0 00-5-5H9a5 5 0 00-5 5v2" /></svg>
-                      )}
-                      {selectedPlace.category === "food" && (
-                        <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v8m0 0l-3-3m3 3l3-3M4 4l16 16" /></svg>
-                      )}
-                      {selectedPlace.category === "stay" && (
-                        <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2z" /></svg>
-                      )}
-                      {selectedPlace.category === "shopping" && (
-                        <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" /></svg>
-                      )}
-                    </div>
+                    />
                     <p className="text-xs font-medium uppercase tracking-wider text-slate-400">
                       {CATEGORY_LABELS[selectedPlace.category]}
                     </p>
                   </div>
                   <h3 className="mt-2.5 text-base font-bold text-slate-900">{selectedPlace.name}</h3>
-                  <p className="mt-1.5 text-sm leading-relaxed text-slate-500">{selectedPlace.description}</p>
+                  {selectedPlace.description ? (
+                    <p className="mt-1.5 text-sm leading-relaxed text-slate-500">
+                      {selectedPlace.description}
+                    </p>
+                  ) : null}
                 </div>
               </Popup>
             )}
@@ -409,7 +485,6 @@ const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
         </div>
       </div>
 
-      {/* Bottom Info Cards — Skeuomorphic */}
       <div className="grid gap-4 lg:grid-cols-2">
         <div
           className="rounded-[28px] border border-slate-200/70 bg-gradient-to-br from-white via-white to-slate-50/80 p-6 
@@ -437,7 +512,8 @@ const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
             </div>
           </div>
           <p className="mt-4 text-sm leading-relaxed text-slate-500 pl-0.5">
-            {selectedPlace?.description ?? "Pick a point on the satellite map to reveal the next Phuket destination."}
+            {selectedPlace?.description ||
+              "Pick a point on the satellite map to reveal the next Phuket destination."}
           </p>
         </div>
 
@@ -471,4 +547,3 @@ const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
     </div>
   );
 }
-
