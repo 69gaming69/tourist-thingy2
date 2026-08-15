@@ -115,7 +115,7 @@ export default function GeoapifyMap() {
   const mapRef = useRef<MapRef | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [category, setCategory] = useState<PlaceCategory | "all">("all");
-  const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(PLACE_CARDS[0] ?? null);
+const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [viewState, setViewState] = useState<Partial<ViewState>>({
     latitude: DEFAULT_POSITION.latitude,
@@ -138,15 +138,22 @@ export default function GeoapifyMap() {
     );
   }, []);
 
-  // Fly to selected place when it changes
+// Fly to selected place when it changes
   useEffect(() => {
-    if (!mapRef.current || !selectedPlace) return;
-    mapRef.current.flyTo({
-      center: [selectedPlace.lon, selectedPlace.lat],
-      zoom: DEFAULT_ZOOM,
-      duration: 1000,
-    });
-  }, [selectedPlace?.place_id]);
+    if (!mapRef.current || !selectedPlace || !isMapLoaded) return;
+    try {
+      // Stop any in-progress camera animation to avoid MapLibre's
+      // "Attempting to run(), but is already running" error.
+      mapRef.current.stop();
+      mapRef.current.flyTo({
+        center: [selectedPlace.lon, selectedPlace.lat],
+        zoom: DEFAULT_ZOOM,
+        duration: 1000,
+      });
+    } catch {
+      // Map may not be ready yet; ignore transient camera errors.
+    }
+  }, [selectedPlace?.place_id, isMapLoaded]);
 
   const filteredPlaces = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();

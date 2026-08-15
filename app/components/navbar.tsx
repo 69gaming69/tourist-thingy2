@@ -12,14 +12,14 @@ export default function NavBar() {
             <div className="leading-tight">
               <Link
                 href="/"
-                className="text-sm sm:text-base font-semibold hover:underline"
-              >
-                Phuket Tourist App
+                className="text-black text-sm sm:text-base font-semibold hover:underline"
+              > Phuket Tourist App
+               
               </Link>
               <p className="text-xs text-gray-500">Geoapify places explorer</p>
             </div>
           </div>
-
+                                              
           <div className="hidden sm:flex items-center gap-6 text-sm">
             <Link href="/" className="text-gray-700 hover:text-emerald-700 hover:underline">
               Home
