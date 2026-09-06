@@ -63,6 +63,11 @@ type CollectiblePayload = Omit<CollectibleResult, "latitude" | "longitude" | "co
   collected?: boolean;
 };
 
+type CollectiblePageResponse = {
+  results?: CollectiblePayload[];
+  next?: string | null;
+};
+
 const DEFAULT_POSITION: { latitude: number; longitude: number } = {
   latitude: 7.8804,
   longitude: 98.3923,
@@ -229,19 +234,24 @@ async function fetchAllCollectibles(): Promise<CollectibleResult[]> {
   let path: string | null = "/api/collectibles/";
 
   while (path) {
-    const data = await apiFetch<CollectiblePayload[] | { results?: CollectiblePayload[]; next?: string | null }>(
-      path
-    );
+    const data: CollectiblePayload[] | CollectiblePageResponse = await apiFetch<
+      CollectiblePayload[] | CollectiblePageResponse
+    >(path);
+
     if (Array.isArray(data)) {
-      return data.map(normalizeCollectible);
+      return data.map((item: CollectiblePayload) => normalizeCollectible(item));
     }
-    collected.push(...unwrapPaginated(data).map(normalizeCollectible));
-    if (!data.next) {
+
+    const page: CollectiblePageResponse = data;
+    collected.push(...unwrapPaginated<CollectiblePayload>(page).map((item: CollectiblePayload) => normalizeCollectible(item)));
+
+    if (!page.next) {
       path = null;
       break;
     }
+
     try {
-      const nextUrl = new URL(data.next, window.location.origin);
+      const nextUrl: URL = new URL(page.next, window.location.origin);
       path = `${nextUrl.pathname}${nextUrl.search}`;
     } catch {
       path = null;
@@ -257,6 +267,7 @@ export default function GeoapifyMap() {
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [category, setCategory] = useState<PlaceCategory | "all">("all");
+  const [mapStyle, setMapStyle] = useState<"satellite" | "street">("satellite");
 
   // Data
   const [places, setPlaces] = useState<PlaceResult[]>([]);
@@ -319,7 +330,7 @@ export default function GeoapifyMap() {
         if (cancelled) return;
         setPlaces(data.map(normalizePlace));
         setUsingFallback(false);
-      } catch (err: unknown) {
+      } catch {
         if (cancelled) return;
         setPlaces(PLACE_CARDS);
         setUsingFallback(true);
@@ -368,7 +379,7 @@ export default function GeoapifyMap() {
       center: [target.longitude, target.latitude],
       duration: 600,
     });
-  }, [selectedPlace?.id, selectedCollectible?.id, isMapLoaded]);
+  }, [selectedPlace, selectedCollectible, isMapLoaded]);
 
   // Filter places (fallback mode needs client-side filtering)
   const visiblePlaces = useMemo(() => {
@@ -388,6 +399,37 @@ export default function GeoapifyMap() {
   const handleMapLoad = useCallback(() => {
     setIsMapLoaded(true);
   }, []);
+
+  const categoryOptions: Array<PlaceCategory | "all"> = [
+    "all",
+    "beach",
+    "temple",
+    "restaurant",
+    "shop",
+    "attraction",
+    "nature",
+    "nightlife",
+    "other",
+  ];
+
+  const categoryButtons = categoryOptions.map((value) => {
+    const isActive = category === value;
+    return (
+      <button
+        key={value}
+        type="button"
+        onClick={() => setCategory(value)}
+        className={[
+          "rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-all duration-200",
+          isActive
+            ? "border-emerald-500 bg-emerald-500 text-white shadow-[0_8px_18px_rgba(16,185,129,0.22)]"
+            : "border-slate-200 bg-white text-slate-600 hover:border-emerald-200 hover:text-emerald-600",
+        ].join(" ")}
+      >
+        {CATEGORY_LABELS[value]}
+      </button>
+    );
+  });
 
   const handleCollect = useCallback(async () => {
     if (!selectedCollectible) return;
@@ -503,7 +545,29 @@ export default function GeoapifyMap() {
       </div>
 
       {/* ── Category Filters ────────────────────────────────────────── */}
-      <div className="flex flex-wrap gap-2.5">{categoryButtons}</div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-2.5">{categoryButtons}</div>
+        <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white p-1.5 shadow-sm">
+          {(["satellite", "street"] as const).map((style) => {
+            const active = mapStyle === style;
+            return (
+              <button
+                key={style}
+                type="button"
+                onClick={() => setMapStyle(style)}
+                className={[
+                  "rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] transition-all duration-200",
+                  active
+                    ? "bg-slate-900 text-white shadow-sm"
+                    : "text-slate-500 hover:text-slate-800",
+                ].join(" ")}
+              >
+                {style}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       {/* ── Map Container ───────────────────────────────────────────── */}
       <div
@@ -527,7 +591,7 @@ export default function GeoapifyMap() {
           <Map
             ref={mapRef}
             reuseMaps
-            mapStyle={SATELLITE_STYLE}
+            mapStyle={mapStyle === "satellite" ? SATELLITE_STYLE : STREETS_STYLE}
             initialViewState={{
               latitude: DEFAULT_POSITION.latitude,
               longitude: DEFAULT_POSITION.longitude,
