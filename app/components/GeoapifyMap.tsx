@@ -3,10 +3,9 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import Map, { Marker, Popup, NavigationControl } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { MapRef, ViewState } from "react-map-gl/maplibre";
-import { apiFetch } from "@/lib/api";
-
-// ─── Types ───────────────────────────────────────────────────────────────────
+import type { MapRef } from "react-map-gl/maplibre";
+import { ApiError, apiFetch, unwrapPaginated } from "@/lib/api";
+import { useAuth } from "@/app/components/AuthProvider";
 
 export type PlaceCategory =
   | "beach"
@@ -40,11 +39,34 @@ type MapPlacePayload = {
   image_url?: string;
 };
 
-type MapStyle = "satellite" | "streets";
+type CollectibleRarity = "common" | "rare" | "epic" | "legendary";
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+interface CollectibleResult {
+  id: number;
+  name: string;
+  description: string;
+  rarity: CollectibleRarity;
+  image_url?: string;
+  place: number | null;
+  place_name?: string;
+  latitude: number;
+  longitude: number;
+  catch_radius_meters: number;
+  xp_reward: number;
+  points_reward: number;
+  collected: boolean;
+}
 
-const DEFAULT_POSITION = { latitude: 7.8804, longitude: 98.3923 };
+type CollectiblePayload = Omit<CollectibleResult, "latitude" | "longitude" | "collected"> & {
+  latitude: number | string;
+  longitude: number | string;
+  collected?: boolean;
+};
+
+const DEFAULT_POSITION: { latitude: number; longitude: number } = {
+  latitude: 7.8804,
+  longitude: 98.3923,
+};
 const DEFAULT_ZOOM = 12;
 
 const PLACE_CARDS: PlaceResult[] = [
@@ -124,6 +146,20 @@ const CATEGORY_COLORS: Record<PlaceCategory, string> = {
   other: "#64748b",
 };
 
+const RARITY_LABELS: Record<CollectibleRarity, string> = {
+  common: "Common",
+  rare: "Rare",
+  epic: "Epic",
+  legendary: "Legendary",
+};
+
+const RARITY_COLORS: Record<CollectibleRarity, string> = {
+  common: "#34d399",
+  rare: "#38bdf8",
+  epic: "#a78bfa",
+  legendary: "#fbbf24",
+};
+
 const SATELLITE_STYLE = {
   version: 8 as const,
   sources: {
@@ -169,44 +205,76 @@ function normalizePlace(place: MapPlacePayload): PlaceResult {
   };
 }
 
-function getMapStyle(style: MapStyle) {
-  return style === "satellite" ? SATELLITE_STYLE : STREETS_STYLE;
+function normalizeCollectible(item: CollectiblePayload): CollectibleResult {
+  const rarity = (item.rarity in RARITY_COLORS ? item.rarity : "common") as CollectibleRarity;
+  return {
+    id: item.id,
+    name: item.name,
+    description: item.description ?? "",
+    rarity,
+    image_url: item.image_url,
+    place: item.place,
+    place_name: item.place_name,
+    latitude: toNumber(item.latitude),
+    longitude: toNumber(item.longitude),
+    catch_radius_meters: item.catch_radius_meters,
+    xp_reward: item.xp_reward,
+    points_reward: item.points_reward,
+    collected: Boolean(item.collected),
+  };
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────
+async function fetchAllCollectibles(): Promise<CollectibleResult[]> {
+  const collected: CollectibleResult[] = [];
+  let path: string | null = "/api/collectibles/";
+
+  while (path) {
+    const data = await apiFetch<CollectiblePayload[] | { results?: CollectiblePayload[]; next?: string | null }>(
+      path
+    );
+    if (Array.isArray(data)) {
+      return data.map(normalizeCollectible);
+    }
+    collected.push(...unwrapPaginated(data).map(normalizeCollectible));
+    if (!data.next) {
+      path = null;
+      break;
+    }
+    try {
+      const nextUrl = new URL(data.next, window.location.origin);
+      path = `${nextUrl.pathname}${nextUrl.search}`;
+    } catch {
+      path = null;
+    }
+  }
+
+  return collected;
+}
 
 export default function GeoapifyMap() {
   const mapRef = useRef<MapRef | null>(null);
-
-  // Search & filter
+  const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [category, setCategory] = useState<PlaceCategory | "all">("all");
 
   // Data
   const [places, setPlaces] = useState<PlaceResult[]>([]);
+  const [collectibles, setCollectibles] = useState<CollectibleResult[]>([]);
   const [usingFallback, setUsingFallback] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Map state
   const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
+  const [selectedCollectible, setSelectedCollectible] = useState<CollectibleResult | null>(null);
+  const [collectStatus, setCollectStatus] = useState<string | null>(null);
+  const [collecting, setCollecting] = useState(false);
   const [userLocation, setUserLocation] = useState<{
     latitude: number;
     longitude: number;
   } | null>(null);
   const [isMapLoaded, setIsMapLoaded] = useState(false);
-  const [mapStyle, setMapStyle] = useState<MapStyle>("satellite");
-
-  // FIX #1: Use viewState as controlled state
-  const [viewState, setViewState] = useState<ViewState>({
-    latitude: DEFAULT_POSITION.latitude,
-    longitude: DEFAULT_POSITION.longitude,
-    zoom: DEFAULT_ZOOM,
-    bearing: 0,
-    pitch: 0,
-    padding: { top: 0, bottom: 0, left: 0, right: 0 },
-  });
 
   // Debounce search
   useEffect(() => {
@@ -271,19 +339,36 @@ export default function GeoapifyMap() {
 
   // Fly to selected place
   useEffect(() => {
-    if (!mapRef.current || !selectedPlace || !isMapLoaded) return;
-    try {
-      mapRef.current.stop();
-      mapRef.current.flyTo({
-        center: [selectedPlace.longitude, selectedPlace.latitude],
-        zoom: Math.max(viewState.zoom, DEFAULT_ZOOM),
-        duration: 1000,
-      });
-    } catch {
-      // Map may not be ready yet
+    let cancelled = false;
+
+    async function loadCollectibles() {
+      try {
+        const items = await fetchAllCollectibles();
+        if (!cancelled) setCollectibles(items);
+      } catch {
+        if (!cancelled) setCollectibles([]);
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPlace?.id, isMapLoaded]);
+
+    void loadCollectibles();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!isMapLoaded) return;
+    const map = mapRef.current?.getMap();
+    if (!map?.loaded()) return;
+    const target = selectedPlace ?? selectedCollectible;
+    if (!target) return;
+    if (!Number.isFinite(target.latitude) || !Number.isFinite(target.longitude)) return;
+    if (map.isMoving()) return;
+    map.easeTo({
+      center: [target.longitude, target.latitude],
+      duration: 600,
+    });
+  }, [selectedPlace?.id, selectedCollectible?.id, isMapLoaded]);
 
   // Filter places (fallback mode needs client-side filtering)
   const visiblePlaces = useMemo(() => {
@@ -304,63 +389,64 @@ export default function GeoapifyMap() {
     setIsMapLoaded(true);
   }, []);
 
-  // FIX #2: Fly to user location
-  const handleFlyToUser = useCallback(() => {
-    if (!mapRef.current || !userLocation) return;
-    mapRef.current.stop();
-    mapRef.current.flyTo({
-      center: [userLocation.longitude, userLocation.latitude],
-      zoom: 14,
-      duration: 1200,
+  const handleCollect = useCallback(async () => {
+    if (!selectedCollectible) return;
+    if (!user) {
+      setCollectStatus("Log in to collect this item.");
+      return;
+    }
+
+    setCollecting(true);
+    setCollectStatus(null);
+
+    const coords = await new Promise<{ latitude: number; longitude: number } | null>((resolve) => {
+      if (!navigator.geolocation) {
+        resolve(userLocation);
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) =>
+          resolve({
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+          }),
+        () => resolve(userLocation),
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 15000 }
+      );
     });
-    setViewState((prev) => ({
-      ...prev,
-      latitude: userLocation.latitude,
-      longitude: userLocation.longitude,
-      zoom: 14,
-    }));
-  }, [userLocation]);
 
-  // FIX #8: Memoize category buttons
-  const categoryButtons = useMemo(
-    () =>
-      (Object.keys(CATEGORY_LABELS) as Array<PlaceCategory | "all">).map(
-        (value) => {
-          const isActive = category === value;
-          const color =
-            value === "all" ? "#10b981" : CATEGORY_COLORS[value as PlaceCategory];
+    if (!coords) {
+      setCollecting(false);
+      setCollectStatus("Location is required to collect. Allow GPS and try again.");
+      return;
+    }
 
-          return (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setCategory(value)}
-              aria-pressed={isActive}
-              className={[
-                "relative rounded-full border px-4 py-2 text-sm font-semibold transition-all duration-200",
-                isActive
-                  ? "text-white shadow-[0_12px_28px_rgba(0,0,0,0.15)] scale-105"
-                  : "bg-gradient-to-b from-white to-slate-50 text-slate-700 border-slate-200/80 shadow-[0_2px_4px_rgba(15,23,42,0.04),inset_0_1px_0_rgba(255,255,255,0.9)] hover:shadow-[0_8px_20px_rgba(15,23,42,0.06)] hover:-translate-y-0.5 active:translate-y-0",
-              ].join(" ")}
-              style={
-                isActive
-                  ? {
-                      background: `linear-gradient(135deg, ${color}, ${color}dd)`,
-                      borderColor: color,
-                    }
-                  : undefined
-              }
-            >
-              {isActive && (
-                <span className="absolute inset-0 rounded-full bg-white/10 backdrop-blur-[1px]" />
-              )}
-              <span className="relative z-10">{CATEGORY_LABELS[value]}</span>
-            </button>
-          );
-        }
-      ),
-    [category]
-  );
+    setUserLocation(coords);
+
+    try {
+      await apiFetch(`/api/collectibles/${selectedCollectible.id}/collect/`, {
+        method: "POST",
+        body: JSON.stringify({
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+        }),
+      });
+      setCollectibles((current) =>
+        current.map((item) =>
+          item.id === selectedCollectible.id ? { ...item, collected: true } : item
+        )
+      );
+      setSelectedCollectible((current) =>
+        current ? { ...current, collected: true } : current
+      );
+      setCollectStatus("Collected!");
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Could not collect this item.";
+      setCollectStatus(message);
+    } finally {
+      setCollecting(false);
+    }
+  }, [selectedCollectible, user, userLocation]);
 
   return (
     <div className="space-y-6 font-['Inter',system-ui,sans-serif]">
@@ -425,35 +511,14 @@ export default function GeoapifyMap() {
                     shadow-[0_30px_80px_rgba(15,23,42,0.10),0_10px_30px_rgba(15,23,42,0.06),-4px_-4px_16px_rgba(255,255,255,0.8)]
                     border border-slate-200/60 bg-white transition-all duration-300"
       >
-        <div className="relative h-[540px] w-full">
+        <div className="relative h-[540px] w-full min-h-[540px]">
           {loading && (
-            <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/70 text-sm font-medium text-slate-600">
-              <div className="flex items-center gap-3">
-                <svg
-                  className="h-5 w-5 animate-spin text-emerald-500"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                  />
-                </svg>
-                Loading places…
-              </div>
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-white/70 text-sm font-medium text-slate-600">
+              Loading places…
             </div>
           )}
           {error && !loading && (
-            <div className="absolute left-4 right-4 top-4 z-20 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <div className="pointer-events-none absolute left-4 right-4 top-4 z-20 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
               {error}
             </div>
           )}
@@ -461,10 +526,13 @@ export default function GeoapifyMap() {
           {/* FIX #1: Use viewState (controlled) instead of initialViewState */}
           <Map
             ref={mapRef}
-            mapLib={import("maplibre-gl")}
-            mapStyle={getMapStyle(mapStyle)}
-            {...viewState}
-            onMove={(evt) => setViewState(evt.viewState)}
+            reuseMaps
+            mapStyle={SATELLITE_STYLE}
+            initialViewState={{
+              latitude: DEFAULT_POSITION.latitude,
+              longitude: DEFAULT_POSITION.longitude,
+              zoom: DEFAULT_ZOOM,
+            }}
             style={{ width: "100%", height: "100%" }}
             onLoad={handleMapLoad}
             attributionControl={false}
@@ -473,97 +541,7 @@ export default function GeoapifyMap() {
             doubleClickZoom
             touchZoomRotate
           >
-            {/* Navigation controls */}
-            <div className="absolute right-4 top-4 z-10 flex flex-col gap-2">
-              {/* FIX #5: Locate me button */}
-              {userLocation && (
-                <button
-                  type="button"
-                  onClick={handleFlyToUser}
-                  aria-label="Center on your location"
-                  className="flex h-10 w-10 items-center justify-center rounded-2xl
-                             bg-white border border-slate-200/80
-                             shadow-[0_8px_24px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.9)]
-                             transition-all duration-200 hover:shadow-[0_12px_32px_rgba(15,23,42,0.16)] hover:scale-105 active:scale-95"
-                >
-                  <svg
-                    className="h-[18px] w-[18px] text-emerald-600"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={2.5}
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4z"
-                    />
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M12 2v2m0 16v2M2 12h2m16 0h2"
-                    />
-                  </svg>
-                </button>
-              )}
-
-              {/* FIX #6: Map style toggle */}
-              <button
-                type="button"
-                onClick={() =>
-                  setMapStyle((prev) =>
-                    prev === "satellite" ? "streets" : "satellite"
-                  )
-                }
-                aria-label={`Switch to ${mapStyle === "satellite" ? "street" : "satellite"} view`}
-                className="flex h-10 w-10 items-center justify-center rounded-2xl
-                           bg-white border border-slate-200/80
-                           shadow-[0_8px_24px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.9)]
-                           transition-all duration-200 hover:shadow-[0_12px_32px_rgba(15,23,42,0.16)] hover:scale-105 active:scale-95"
-              >
-                {mapStyle === "satellite" ? (
-                  <svg
-                    className="h-[18px] w-[18px] text-slate-600"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={2}
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l5.447 2.724A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"
-                    />
-                  </svg>
-                ) : (
-                  <svg
-                    className="h-[18px] w-[18px] text-slate-600"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={2}
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
-                )}
-              </button>
-
-              <NavigationControl
-                position="top-right"
-                style={{
-                  borderRadius: "16px",
-                  overflow: "hidden",
-                  boxShadow:
-                    "0 8px 24px rgba(15,23,42,0.12), inset 0 1px 0 rgba(255,255,255,0.9)",
-                  border: "1px solid rgba(226, 232, 240, 0.8)",
-                  background: "white",
-                }}
-              />
-            </div>
+            <NavigationControl position="top-right" />
 
             {/* User location marker */}
             {userLocation && (
@@ -573,7 +551,7 @@ export default function GeoapifyMap() {
                 anchor="center"
               >
                 <div
-                  className="relative flex h-7 w-7 items-center justify-center"
+                  className="pointer-events-none relative flex h-7 w-7 items-center justify-center"
                   style={{
                     filter: "drop-shadow(0 4px 12px rgba(16,185,129,0.35))",
                   }}
@@ -596,12 +574,14 @@ export default function GeoapifyMap() {
 
               return (
                 <Marker
-                  key={place.id}
+                  key={`place-${place.id}`}
                   latitude={place.latitude}
                   longitude={place.longitude}
                   anchor="bottom"
                   onClick={(e) => {
                     e.originalEvent.stopPropagation();
+                    setSelectedCollectible(null);
+                    setCollectStatus(null);
                     setSelectedPlace(place);
                   }}
                 >
@@ -633,21 +613,45 @@ export default function GeoapifyMap() {
               );
             })}
 
-            {/* FIX #10: Empty state */}
-            {!loading && visiblePlaces.length === 0 && (
-              <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
-                <div className="rounded-2xl bg-white/90 backdrop-blur-sm px-6 py-4 text-center shadow-lg border border-slate-100">
-                  <p className="text-sm font-semibold text-slate-700">
-                    No places found
-                  </p>
-                  <p className="mt-1 text-xs text-slate-400">
-                    Try a different search or category
-                  </p>
-                </div>
-              </div>
-            )}
+            {collectibles.map((item) => {
+              const color = RARITY_COLORS[item.rarity];
+              return (
+                <Marker
+                  key={`collectible-${item.id}`}
+                  latitude={item.latitude}
+                  longitude={item.longitude}
+                  anchor="center"
+                  onClick={(e) => {
+                    e.originalEvent.stopPropagation();
+                    setSelectedPlace(null);
+                    setCollectStatus(null);
+                    setSelectedCollectible(item);
+                  }}
+                >
+                  <button
+                    type="button"
+                    aria-label={item.name}
+                    className="relative flex h-9 w-9 cursor-pointer items-center justify-center transition-transform duration-200 hover:scale-110 active:scale-95"
+                    style={{ filter: `drop-shadow(0 0 12px ${color}88)` }}
+                  >
+                    <span
+                      className="absolute inset-0 rounded-full opacity-70"
+                      style={{
+                        background: `radial-gradient(circle, ${color}55 0%, transparent 70%)`,
+                      }}
+                    />
+                    <span
+                      className="relative h-5 w-5 rounded-full border-2 border-white"
+                      style={{
+                        background: `radial-gradient(circle at 30% 30%, #fff 0%, ${color} 55%, ${color}cc 100%)`,
+                        opacity: item.collected ? 0.45 : 1,
+                      }}
+                    />
+                  </button>
+                </Marker>
+              );
+            })}
 
-            {/* Popup */}
             {selectedPlace && (
               <Popup
                 latitude={selectedPlace.latitude}
@@ -715,10 +719,64 @@ export default function GeoapifyMap() {
                       {selectedPlace.description}
                     </p>
                   ) : null}
-                  <p className="mt-2 text-[11px] text-slate-300">
-                    {selectedPlace.latitude.toFixed(4)},{" "}
-                    {selectedPlace.longitude.toFixed(4)}
+                </div>
+              </Popup>
+            )}
+
+            {selectedCollectible && (
+              <Popup
+                latitude={selectedCollectible.latitude}
+                longitude={selectedCollectible.longitude}
+                anchor="bottom"
+                offset={[0, -8]}
+                closeOnClick={false}
+                onClose={() => {
+                  setSelectedCollectible(null);
+                  setCollectStatus(null);
+                }}
+                maxWidth="300px"
+                className="skeuo-popup"
+              >
+                <div
+                  className="rounded-[20px] border border-emerald-100 bg-white p-4
+                              shadow-[0_12px_40px_rgba(15,23,42,0.12),inset_0_1px_0_rgba(255,255,255,0.9)]"
+                >
+                  <p
+                    className="text-[10px] font-bold uppercase tracking-[0.22em]"
+                    style={{ color: RARITY_COLORS[selectedCollectible.rarity] }}
+                  >
+                    {RARITY_LABELS[selectedCollectible.rarity]} collectible
                   </p>
+                  <h3 className="mt-1.5 text-base font-bold text-slate-900">{selectedCollectible.name}</h3>
+                  {selectedCollectible.description ? (
+                    <p className="mt-1.5 text-sm leading-relaxed text-slate-500">
+                      {selectedCollectible.description}
+                    </p>
+                  ) : null}
+                  {selectedCollectible.place_name ? (
+                    <p className="mt-2 text-xs text-slate-500">
+                      Near {selectedCollectible.place_name}
+                    </p>
+                  ) : null}
+                  <p className="mt-1 text-xs text-slate-400">
+                    +{selectedCollectible.xp_reward} XP · +{selectedCollectible.points_reward} pts ·{" "}
+                    {selectedCollectible.catch_radius_meters}m range
+                  </p>
+                  {selectedCollectible.collected ? (
+                    <p className="mt-3 text-sm font-semibold text-emerald-700">Already collected</p>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={collecting}
+                      onClick={() => void handleCollect()}
+                      className="mt-3 w-full rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_8px_18px_rgba(16,185,129,0.28)] disabled:opacity-60"
+                    >
+                      {collecting ? "Collecting…" : user ? "Collect" : "Log in to collect"}
+                    </button>
+                  )}
+                  {collectStatus ? (
+                    <p className="mt-2 text-xs leading-relaxed text-amber-800">{collectStatus}</p>
+                  ) : null}
                 </div>
               </Popup>
             )}
@@ -764,12 +822,13 @@ export default function GeoapifyMap() {
                 Destination
               </p>
               <p className="text-lg font-bold text-slate-900 leading-tight">
-                {selectedPlace?.name ?? "Tap a marker to explore"}
+                {selectedPlace?.name ?? selectedCollectible?.name ?? "Tap a marker to explore"}
               </p>
             </div>
           </div>
           <p className="mt-4 text-sm leading-relaxed text-slate-500 pl-0.5">
             {selectedPlace?.description ||
+              selectedCollectible?.description ||
               "Pick a point on the satellite map to reveal the next Phuket destination."}
           </p>
         </div>
@@ -809,9 +868,7 @@ export default function GeoapifyMap() {
             </div>
           </div>
           <p className="mt-4 text-sm leading-relaxed text-slate-500 pl-0.5">
-            {mapStyle === "satellite"
-              ? "Premium satellite imagery powered by MapLibre & ESRI. Rich shadows, tactile surfaces, and polished depth create a skeuomorphic experience."
-              : "Clean vector streets from CARTO. Minimal, readable, and perfect for navigating roads and neighborhoods."}
+            Pins are places. Glowing orbs are collectibles. Pan, zoom, and tap markers for details.
           </p>
         </div>
       </div>
