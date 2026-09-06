@@ -14,17 +14,17 @@ export default function Home() {
           <div className="mt-8 grid gap-6 lg:grid-cols-[1.5fr_1fr] lg:items-end">
             <div>
               <h1 className="text-4xl font-extrabold tracking-tight text-slate-950 sm:text-5xl">
-                A soft, skeuomorphic Phuket map experience with free tiles.
+                TEXT1
               </h1>
               <p className="mt-4 max-w-2xl text-lg leading-8 text-slate-600">
-                Explore Phuket locations with a polished tactile interface, free OpenStreetMap tiles, and no API key required.
+                BIG TEXT2
               </p>
             </div>
 
             <div className="rounded-[28px] border border-emerald-200 bg-[#dceddc] p-5 shadow-[inset_5px_5px_16px_rgba(15,23,42,0.06),inset_-5px_-5px_16px_rgba(255,255,255,0.9)]">
               <p className="text-sm uppercase tracking-[0.24em] text-slate-500">No key, no limits</p>
               <p className="mt-3 text-sm leading-6 text-slate-700">
-                Uses free OSM tile layers and built-in location search, so the entire app stays lightweight and beautiful.
+               BIG TEXT3
               </p>
             </div>
           </div>
